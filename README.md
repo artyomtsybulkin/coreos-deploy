@@ -40,7 +40,9 @@ wipefs -a /dev/sda
 wipefs -a /dev/sdb
 sgdisk --zap-all /dev/sda
 sgdisk --zap-all /dev/sdb
-coreos-installer install /dev/sda --insecure-ignition --ignition-url http://172.23.32.1/podman.ign
+coreos-installer install /dev/sda \
+    --insecure-ignition \
+    --ignition-url http://172.23.32.1/podman.ign
 poweroff
 ```
 
