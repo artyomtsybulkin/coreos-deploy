@@ -1,0 +1,153 @@
+variant: fcos
+version: 1.6.0
+
+# Users definition
+passwd:
+  users:
+    - name: root
+      no_create_home: true
+      password_hash: $y$j9T$E2pxnHZulrpnMFTUGiJtY0$fgLHHUkl4tXJ4OrPO1jxRNl7adQjT87Y.iHHW6SRe81
+      #ssh_authorized_keys:
+      #  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEkcPuelmHLKhkmPvnWkpP6q88fGfGL0IqJ6Vu7mP955 core
+    - name: core
+      no_create_home: false
+      # password_hash: $y$j9T$E2pxnHZulrpnMFTUGiJtY0$fgLHHUkl4tXJ4OrPO1jxRNl7adQjT87Y.iHHW6SRe81
+      ssh_authorized_keys:
+        - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEkcPuelmHLKhkmPvnWkpP6q88fGfGL0IqJ6Vu7mP955 core
+
+# System configuration
+storage:
+  directories:
+    # Directory for podman-compose.yaml and related configs
+    - path: /var/mnt/compose
+      overwrite: true
+      mode: 0776
+      user:
+        name: core
+    # Directory for podman runroot
+    - path: /var/mnt/containers/runroot
+      overwrite: true
+      mode: 0777
+      user:
+        name: core
+      group:
+        name: core
+    # Directory for containers storage
+    - path: /var/mnt/containers/storage
+      overwrite: true
+      mode: 0777
+      user:
+        name: core
+      group:
+        name: core
+    # Directory for podman storage config
+    - path: /var/home/core/.config
+      overwrite: true
+      mode: 0777
+      user:
+        name: core
+      group:
+        name: core
+  # Configure timezone
+  links:
+    - path: /etc/localtime
+      target: ../usr/share/zoneinfo/America/Toronto
+  # Put configuration files
+  files:
+    # Blacklist hv_balloon module
+    - path: /etc/modprobe.d/blacklist-hv_balloon.conf
+      mode: 0644
+      contents:
+        inline: |
+          blacklist hv_balloon
+    # Set sysctl for unprivileged ports
+    - path: /etc/sysctl.d/90-unprivileged-ports.conf
+      mode: 0644
+      contents:
+        inline: |
+          net.ipv4.ip_unprivileged_port_start=21
+    # Use core user for podman, set storage locations
+    - path: /var/home/core/.config/containers/storage.conf
+      mode: 0777
+      user:
+        name: core
+      contents:
+        inline: |
+          [storage]
+          driver = "overlay"
+          runroot = "/run/user/1000/containers"
+          graphroot = "/var/mnt/containers/storage"
+
+          [storage.options]
+          mount_program = "/usr/bin/fuse-overlayfs"
+    # Set hostname
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: vm-podman
+    # Zram configuration
+    - path: /etc/systemd/zram-generator.conf
+      mode: 0644
+      contents:
+        inline: |
+          [zram0]
+          zram-size = ram / 2
+          compression-algorithm = zstd
+          swap-priority = 100
+    # Post-install script for packages and NTP pools
+    - path: /var/mnt/post-install.sh
+      mode: 0777
+      user:
+        name: core
+      contents:
+        inline: |
+          #!/bin/bash
+          loginctl enable-linger core
+          rpm-ostree install \
+            hyperv-daemons wget htop glibc-all-langpacks \
+            podman-compose
+          sed -i \
+            's|^pool 2\.fedora\.pool\.ntp\.org iburst$|\
+          pool pool.ntp.org iburst\
+          \npool time.nist.gov iburst|' \
+            /etc/chrony.conf
+    # Podman initialization script
+    - path: /var/mnt/podman.sh
+      mode: 0777
+      user:
+        name: core
+      contents:
+        inline: |
+          #!/bin/bash
+          podman network create --driver bridge \
+            --subnet 10.10.90.0/24 --gateway 10.10.90.1 public_net
+          podman network create --driver bridge \
+            --subnet 10.10.91.0/24 --gateway 10.10.91.1 --internal private_net
+    # Zincati configuration for updates scheduling
+    - path: /etc/zincati/config.d/55-updates-strategy.toml
+      contents:
+        inline: |
+          [updates]
+          strategy = "periodic"
+          [[updates.periodic.window]]
+          days = [ "Sat", "Sun" ]
+          start_time = "04:00"
+          length_minutes = 30
+  # Configure sdb device as persistent storage
+  filesystems:
+    - path: /var/mnt
+      device: /dev/disk/by-partlabel/storage
+      format: xfs
+      wipe_filesystem: true
+      with_mount_unit: true
+  disks:
+    - device: /dev/sdb
+      wipe_table: true
+      partitions:
+        - label: storage
+          size_mib: 0
+# Set kernel arguments for zram
+kernel_arguments:
+  should_exist:
+    - zram.num_devices=1
+    - zram.size=2048
